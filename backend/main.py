@@ -10,6 +10,7 @@ import tifffile as tiff
 from typing import List, Dict, Any
 from sqlalchemy.orm import Session
 import physics
+
 # Database Imports (Neon PostgreSQL Connection)
 from database import engine, get_db, init_db
 import models
@@ -28,8 +29,8 @@ async def lifespan(app: FastAPI):
     yield
 
 app = FastAPI(
-    title="HydroGuard AI Engine API",
-    description="2D Dam Break Inundation Engine with Real DEM Ingestion & Alerting Support",
+    title="SurgeShield AI Engine API",
+    description="2D Hydrodynamic Dam-Breach & Inundation Assessment Engine with Real DEM Ingestion",
     version="1.3.0",
     lifespan=lifespan
 )
@@ -104,12 +105,12 @@ def load_dem_grid(grid_size: int) -> np.ndarray:
             step_y = max(1, raw_dem.shape[1] // grid_size)
             elevation = raw_dem[::step_x, ::step_y][:grid_size, :grid_size].astype(np.float64)
             
-            print(f"[DEM LOADER] Successfully loaded real DEM from {dem_path}")
+            print(f"[SurgeShield DEM LOADER] Successfully loaded real DEM from {dem_path}")
             return elevation
         except Exception as e:
-            print(f"[DEM LOADER Warning] Failed to parse {dem_path}: {e}. Falling back to synthetic DEM.")
+            print(f"[SurgeShield DEM LOADER Warning] Failed to parse {dem_path}: {e}. Falling back to synthetic DEM.")
 
-    print("[DEM LOADER] Using synthetic terrain model.")
+    print("[SurgeShield DEM LOADER] Using synthetic terrain model.")
     x_coords = np.linspace(0, 5000, grid_size)
     y_coords = np.linspace(0, 5000, grid_size)
     X, Y = np.meshgrid(x_coords, y_coords)
@@ -137,9 +138,8 @@ def evaluate_settlements(water_depth_matrix: np.ndarray, db: Session = None) -> 
                         "critical_depth_m": 1.0
                     })
         except Exception as e:
-            # Rollback to prevent transaction poisoning across simulation frames
             db.rollback()
-            print(f"[DB SETTLEMENT FETCH WARNING] Transaction rolled back: {e}")
+            print(f"[SurgeShield DB WARNING] Transaction rolled back: {e}")
 
     # Fallback to local villages.json if DB query fails or returns empty
     if not settlements:
@@ -273,7 +273,7 @@ def solve_shallow_water_2d(req: DamBreachRequest, db: Session = None):
 def read_root():
     return {
         "status": "Online",
-        "project": "HydroGuard AI Dam Break Engine",
+        "project": "SurgeShield AI Dam Break Engine",
         "version": "1.3.0"
     }
 
@@ -292,14 +292,14 @@ def run_dam_break_simulation(payload: DamBreachRequest, db: Session = Depends(ge
             )
             db.add(sim_record)
             db.commit()
-            print("[DB SUCCESS] Logged simulation run to Neon DB.")
+            print("[SurgeShield DB] Successfully logged simulation run to Neon DB.")
         except Exception as db_err:
             db.rollback()
-            print(f"[DB LOG WARNING] {db_err}")
+            print(f"[SurgeShield DB LOG WARNING] {db_err}")
 
         return response
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Simulation Solver Error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"SurgeShield Solver Error: {str(e)}")
 
 @app.post("/api/generate-pdf-report")
 def download_pdf_report(payload: DamBreachRequest, db: Session = Depends(get_db)):
@@ -325,7 +325,7 @@ def download_pdf_report(payload: DamBreachRequest, db: Session = Depends(get_db)
             "risk_summary": final_alerts
         }
         
-        pdf_filename = "Dam_Break_Inundation_Report.pdf"
+        pdf_filename = "SurgeShield_Dam_Break_Report.pdf"
         generate_pdf_report(summary_payload, pdf_filename)
         
         return FileResponse(
@@ -334,7 +334,7 @@ def download_pdf_report(payload: DamBreachRequest, db: Session = Depends(get_db)
             media_type="application/pdf"
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"PDF Generation Error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"SurgeShield PDF Generation Error: {str(e)}")
 
 @app.get("/api/export-geojson")
 def export_geojson_boundary():
