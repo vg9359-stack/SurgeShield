@@ -1,0 +1,550 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SurgeShield Tactical GIS - Emergency Command Suite</title>
+  
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+
+  <style>
+    #map-viewport-container { position: relative; width: 100%; height: 100%; min-height: 400px; }
+    #leafletMap { position: absolute; top: 0; left: 0; right: 0; bottom: 0; width: 100% !important; height: 100% !important; }
+    ::-webkit-scrollbar { width: 4px; height: 4px; }
+    ::-webkit-scrollbar-track { background: #0f172a; }
+    ::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
+
+    /* Animated water flow polyline */
+    .flow-line-animated {
+      stroke-dasharray: 12, 12;
+      animation: flowDash 1.5s linear infinite;
+    }
+    @keyframes flowDash {
+      to { stroke-dashoffset: -24; }
+    }
+
+    /* Animated Safe Evacuation Route */
+    .evac-route-animated {
+      stroke-dasharray: 8, 8;
+      animation: evacDash 1s linear infinite;
+    }
+    @keyframes evacDash {
+      to { stroke-dashoffset: -16; }
+    }
+
+    /* Styling Leaflet Layer Switcher for Dark Theme */
+    .leaflet-control-layers {
+      background: #0f172a !important;
+      color: #f8fafc !important;
+      border: 1px solid #334155 !important;
+      border-radius: 8px !important;
+      box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5) !important;
+    }
+    .leaflet-control-layers-expanded {
+      padding: 10px 12px !important;
+    }
+    .leaflet-control-layers-base label {
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+  </style>
+</head>
+
+<body class="bg-slate-950 text-slate-100 flex flex-col h-screen overflow-hidden font-sans">
+
+  <!-- DYNAMIC CITY-SPECIFIC EMERGENCY WARNING BANNER -->
+  <div id="warning-banner" class="hidden bg-red-600 text-white px-4 py-1.5 flex justify-between items-center text-xs font-bold animate-pulse z-40 shrink-0">
+    <div class="flex items-center space-x-2 overflow-hidden">
+      <span class="bg-black/30 px-2 py-0.5 rounded text-[10px] tracking-wider uppercase font-extrabold shrink-0 text-amber-300">🚨 IMMEDIATE EVACUATION ORDER</span>
+      <span id="warning-banner-text" class="truncate">EVACUATE IMMEDIATELY: Kundrathur, Thirumazhisai & Poonamallee sectors! High breach velocity detected.</span>
+    </div>
+    <button onclick="triggerEvacuationAlert()" class="bg-black/40 hover:bg-black/60 px-3 py-1 rounded text-[11px] uppercase tracking-wide border border-white/20 shrink-0 ml-2">View Safe Routes</button>
+  </div>
+
+  <!-- HEADER NAVBAR -->
+  <header class="bg-slate-900 border-b border-slate-800 px-6 py-2.5 flex justify-between items-center shrink-0 z-30 shadow-2xl">
+    <div class="flex items-center space-x-3">
+      <div id="sim-indicator" class="w-4 h-4 rounded-full bg-slate-500"></div>
+      <div>
+        <h1 class="text-lg font-bold tracking-wide text-white">SurgeShield <span class="text-cyan-400 font-extrabold">TACTICAL GIS</span></h1>
+        <p class="text-[10px] text-slate-400">Integrated GIS, Hydrologic Modeling & AI Command Suite</p>
+      </div>
+    </div>
+
+    <!-- Actions -->
+    <div class="flex items-center space-x-2">
+      <button id="btn-run-sim" onclick="togglePulsePlayback()" class="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-3 py-1.5 rounded-lg text-xs shadow-md transition">
+        ▶ Run Simulation
+      </button>
+      <button onclick="triggerEvacuationAlert()" class="bg-red-600 hover:bg-red-500 text-white font-bold px-3 py-1.5 rounded-lg text-xs shadow-md transition flex items-center space-x-1">
+        <span>🚨 Evacuation Alert</span>
+      </button>
+      <button onclick="generatePdfReport()" class="bg-indigo-600 hover:bg-indigo-500 text-white font-bold px-3 py-1.5 rounded-lg text-xs shadow-md transition flex items-center space-x-1">
+        <span>📄 Export SitRep PDF</span>
+      </button>
+      <button onclick="resetSimulation()" class="bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold px-2.5 py-1.5 rounded-lg text-xs border border-slate-700">
+        🔄
+      </button>
+    </div>
+  </header>
+
+  <!-- MAIN BODY -->
+  <div class="grid grid-cols-12 flex-1 overflow-hidden p-3 gap-3">
+
+    <!-- LEFT PANEL -->
+    <div class="col-span-4 flex flex-col space-y-3 overflow-hidden h-full">
+      
+      <!-- BREACH HYDRAULICS -->
+      <div class="bg-slate-900 border border-slate-800 rounded-xl p-3 shrink-0 shadow-lg">
+        <div class="flex justify-between items-center mb-2">
+          <h2 class="text-xs font-bold text-slate-300 uppercase tracking-wider">Froehlich Breach Hydraulics</h2>
+          <span id="calc-status" class="text-[10px] bg-slate-800 text-slate-400 border border-slate-700 px-2 py-0.5 rounded font-mono">Idle</span>
+        </div>
+        <div class="grid grid-cols-3 gap-2 text-center">
+          <div class="bg-slate-950 p-2 rounded-lg border border-slate-800">
+            <p class="text-[9px] text-slate-400">Current Outflow</p>
+            <p id="metric-qpeak" class="text-sm font-extrabold text-cyan-400">0 m³/s</p>
+          </div>
+          <div class="bg-slate-950 p-2 rounded-lg border border-slate-800">
+            <p class="text-[9px] text-slate-400">Breach Width</p>
+            <p id="metric-bwidth" class="text-sm font-extrabold text-cyan-400">0.0 m</p>
+          </div>
+          <div class="bg-slate-950 p-2 rounded-lg border border-slate-800">
+            <p class="text-[9px] text-slate-400">Elapsed Time</p>
+            <p id="metric-tfailure" class="text-sm font-extrabold text-cyan-400">0.0 min</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- CHARTS -->
+      <div class="bg-slate-900 border border-slate-800 rounded-xl p-3 flex flex-col shrink-0 h-40 relative shadow-lg">
+        <div class="flex justify-between items-center mb-1">
+          <h2 class="text-xs font-bold text-slate-300 uppercase tracking-wider">Hydraulic Analytical Charts</h2>
+        </div>
+        <div id="chart-wrap-hydro" class="relative flex-1 w-full h-full min-h-0">
+          <canvas id="hydrographChart"></canvas>
+        </div>
+      </div>
+
+      <!-- IoT TELEMETRY -->
+      <div class="bg-slate-900 border border-slate-800 rounded-xl p-3 shrink-0 shadow-lg space-y-2">
+        <div class="flex justify-between items-center">
+          <h2 class="text-xs font-bold text-slate-300 uppercase tracking-wider">Real-Time Telemetry</h2>
+          <span id="telemetry-status" class="text-[10px] text-slate-500 font-mono">Standby</span>
+        </div>
+        <div class="grid grid-cols-2 gap-2 text-xs">
+          <div class="bg-slate-950 p-2 rounded border border-slate-800">
+            <p class="text-[9px] text-slate-400">Gauge #01 (Dam Crest)</p>
+            <p id="sensor-val-1" class="font-mono font-bold text-cyan-400">0.00 m</p>
+          </div>
+          <div class="bg-slate-950 p-2 rounded border border-slate-800">
+            <p class="text-[9px] text-slate-400">Gauge #02 (Downstream)</p>
+            <p id="sensor-val-2" class="font-mono font-bold text-cyan-400">0.00 m</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- EVACUATION & BREACH FLOW PANEL -->
+      <div class="bg-slate-900 border border-slate-800 rounded-xl p-3 flex-1 flex flex-col overflow-hidden shadow-lg">
+        <div class="flex justify-between items-center mb-2 shrink-0">
+          <h2 class="text-xs font-bold text-slate-300 uppercase tracking-wider">Evacuation Routes & Safe Hubs</h2>
+          <span class="text-[9px] bg-emerald-950 text-emerald-400 border border-emerald-800 px-1.5 py-0.5 rounded font-mono">ACTIVE ROUTES</span>
+        </div>
+        <div id="evac-route-container" class="space-y-2 overflow-y-auto flex-1 pr-1 text-xs">
+          <div class="bg-slate-950 p-2 rounded border border-emerald-800/60">
+            <p class="font-bold text-emerald-400 flex items-center space-x-1">
+              <span>🟩 Designated Safe Route 1 (West Corridor)</span>
+            </p>
+            <p class="text-[10px] text-slate-300">Evacuate west via NH48: Kundrathur → Pattunool Chatram → Sriperumbudur High Ground (+42m MSL).</p>
+          </div>
+          <div class="bg-slate-950 p-2 rounded border border-blue-800/60">
+            <p class="font-bold text-blue-400">🌊 River Breach Water Direction</p>
+            <p class="text-[10px] text-slate-300">Flowing East: Chembarambakkam → Poonamallee → Porur → Kotturpuram.</p>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- RIGHT PANEL DISPLAY -->
+    <div class="col-span-8 flex flex-col space-y-3 overflow-hidden h-full">
+      
+      <!-- MAP VIEWPORT -->
+      <div id="map-viewport-container" class="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-2xl">
+        <div id="leafletMap"></div>
+
+        <!-- HUD -->
+        <div class="absolute top-4 left-4 z-20 bg-slate-950/85 backdrop-blur border border-slate-800 p-3 rounded-xl shadow-2xl space-y-2 w-64 pointer-events-none">
+          <div class="flex justify-between items-center border-b border-slate-800 pb-1.5">
+            <span class="text-[11px] font-bold text-slate-200">Simulation Engine</span>
+            <span id="hud-sim-state" class="text-[9px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded font-bold uppercase">READY</span>
+          </div>
+          <div class="grid grid-cols-2 gap-2 text-[10px]">
+            <div>
+              <span class="text-slate-400 block">Wave Velocity</span>
+              <span id="hud-wave-speed" class="font-bold font-mono text-cyan-400">0.0 km/h</span>
+            </div>
+            <div>
+              <span class="text-slate-400 block">Inundation Vol</span>
+              <span id="hud-flood-vol" class="font-bold font-mono text-amber-400">0.0 M m³</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- TIMELINE SCRUBBER -->
+      <div class="bg-slate-900 border border-slate-800 rounded-xl p-3 shrink-0 shadow-xl flex items-center space-x-4">
+        <button id="btn-playback-toggle" onclick="togglePulsePlayback()" class="bg-cyan-600 hover:bg-cyan-500 text-white font-bold w-10 h-10 rounded-lg flex items-center justify-center shadow-lg transition text-base shrink-0">
+          ▶
+        </button>
+
+        <div class="shrink-0 font-mono text-xs w-24">
+          <span class="text-slate-400 block text-[9px]">TIMELINE STAGE</span>
+          <span id="playback-time-text" class="text-cyan-400 font-extrabold text-sm">T+ 000 min</span>
+        </div>
+
+        <div class="flex-1 flex flex-col space-y-1">
+          <div class="flex justify-between text-[10px] text-slate-400 font-mono">
+            <span>T+ 0 min (Breach)</span>
+            <span>T+ 60 min (Peak Crest)</span>
+            <span>T+ 120 min (Recession)</span>
+          </div>
+          <input id="playback-slider" type="range" min="0" max="120" value="0" oninput="onScrubberSlide(this.value)" class="w-full accent-cyan-500 bg-slate-800 h-2 rounded-lg cursor-pointer">
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- EVACUATION MODAL -->
+  <div id="evac-modal" class="hidden fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+    <div class="bg-slate-900 border border-red-800 rounded-xl p-5 max-w-md w-full shadow-2xl space-y-4">
+      <div class="flex justify-between items-center border-b border-slate-800 pb-2">
+        <h3 class="text-red-500 font-bold text-base flex items-center space-x-2">
+          <span>🚨</span> <span>CITY EVACUATION COMMAND DIRECTIVE</span>
+        </h3>
+        <button onclick="closeEvacModal()" class="text-slate-400 hover:text-white">✕</button>
+      </div>
+      <p class="text-xs text-slate-300 leading-relaxed">
+        Hydrologic modeling predicts a fast-moving flood front along the Adyar River corridor. Immediate evacuation is ordered for the following municipal sectors:
+      </p>
+      <div class="space-y-2 text-xs">
+        <div class="p-2 bg-red-950/60 border border-red-800 rounded">
+          <strong class="text-red-400 block">IMMEDIATE RED ZONE (Next 15–30 Mins):</strong>
+          Kundrathur, Thirumazhisai, Chembarambakkam, Kovur.
+        </div>
+        <div class="p-2 bg-amber-950/60 border border-amber-800 rounded">
+          <strong class="text-amber-400 block">SECONDARY AMBER ZONE (30–60 Mins):</strong>
+          Poonamallee, Mangadu, Porur, Ramapuram.
+        </div>
+        <div class="p-2 bg-emerald-950/60 border border-emerald-800 rounded">
+          <strong class="text-emerald-400 block">SAFE HIGH-GROUND ASSEMBLY CENTER:</strong>
+          Sriperumbudur Community Center (+42m Elevation, West Highway).
+        </div>
+      </div>
+      <div class="flex space-x-2 pt-2">
+        <button onclick="focusOnSafeRoute(); closeEvacModal();" class="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2 rounded text-xs transition">
+          Zoom to Safe Evacuation Route
+        </button>
+        <button onclick="closeEvacModal()" class="px-4 bg-slate-800 text-slate-300 text-xs rounded">Dismiss</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let leafletMap, hydroChart, floodCircle;
+    let waterFlowPolyline = null;
+    let evacPolyline = null;
+    let safeHubMarker = null;
+    let isPlaying = false;
+    let simInterval = null;
+    let currentTime = 0;
+
+    const timeLabels = [0, 20, 40, 60, 80, 100, 120];
+    const outflowData = [0, 2400, 6100, 7593, 4200, 1800, 400];
+
+    // Water channel path
+    const fullWaterPath = [
+      [13.0090, 80.0581], [13.0010, 80.0750], [13.0180, 80.0950],
+      [13.0250, 80.1250], [13.0320, 80.1550], [13.0280, 80.1850],
+      [13.0220, 80.2100], [13.0150, 80.2400], [13.0130, 80.2750]
+    ];
+
+    // Evacuation route
+    const safeRouteCoordinates = [
+      [13.0010, 80.0750], [13.0060, 80.0400], [13.0120, 80.0100],
+      [13.0300, 79.9700], [13.0500, 79.9400]
+    ];
+
+    window.addEventListener('load', () => {
+      initMap();
+      initChart();
+      drawEvacuationRoutes();
+      updateSimulationUI(0);
+    });
+
+    function initMap() {
+      // 1. Define Map Layers (Standard, Satellite, Dark Mode)
+      const osmStandard = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '© OpenStreetMap'
+      });
+
+      const esriSatellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+        maxZoom: 18,
+        attribution: 'Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community'
+      });
+
+      const cartoDark = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+        maxZoom: 19,
+        attribution: '&copy; OpenStreetMap &copy; CARTO'
+      });
+
+      // Initialize map with Standard OSM layer as default
+      leafletMap = L.map('leafletMap', {
+        center: [13.0150, 80.0500],
+        zoom: 11,
+        layers: [osmStandard]
+      });
+
+      // 2. Add Layer Switcher Control (Top Right)
+      const baseMaps = {
+        "🗺️ Standard Map": osmStandard,
+        "🛰️ Satellite View": esriSatellite,
+        "🌙 Tactical Dark": cartoDark
+      };
+
+      L.control.layers(baseMaps, null, { position: 'topright' }).addTo(leafletMap);
+
+      // Dam Crest Marker
+      L.marker([13.0090, 80.0581]).addTo(leafletMap).bindPopup('<b>Chembarambakkam Dam Crest</b>');
+
+      // Radial inundation circle
+      floodCircle = L.circle([13.0090, 80.0581], {
+        color: '#06b6d4',
+        fillColor: '#0891b2',
+        fillOpacity: 0.35,
+        radius: 0
+      }).addTo(leafletMap);
+
+      // Initialize Water Flow Path line (blue animated line)
+      waterFlowPolyline = L.polyline([], {
+        color: '#0284c7',
+        weight: 6,
+        opacity: 0.9,
+        className: 'flow-line-animated'
+      }).addTo(leafletMap);
+    }
+
+    function drawEvacuationRoutes() {
+      if (evacPolyline) leafletMap.removeLayer(evacPolyline);
+      
+      evacPolyline = L.polyline(safeRouteCoordinates, {
+        color: '#10b981',
+        weight: 6,
+        opacity: 0.95,
+        className: 'evac-route-animated'
+      }).addTo(leafletMap);
+
+      safeHubMarker = L.marker([13.0500, 79.9400]).addTo(leafletMap)
+        .bindPopup('<div class="p-1"><b class="text-emerald-600">🟢 DESIGNATED SAFE ELEVATION HUB</b><br>Sriperumbudur Assembly Center (+42m MSL)<br><span class="text-xs text-slate-500">Elevated dry ground outside flood corridor.</span></div>')
+        .openPopup();
+    }
+
+    function focusOnSafeRoute() {
+      if (evacPolyline) {
+        leafletMap.fitBounds(evacPolyline.getBounds(), { padding: [30, 30] });
+      }
+    }
+
+    function initChart() {
+      const ctxHydro = document.getElementById('hydrographChart').getContext('2d');
+      hydroChart = new Chart(ctxHydro, {
+        type: 'line',
+        data: {
+          labels: timeLabels.map(t => `T+${t}`),
+          datasets: [{
+            label: 'Outflow (m³/s)',
+            data: [0, 0, 0, 0, 0, 0, 0],
+            borderColor: '#38bdf8',
+            backgroundColor: 'rgba(56, 189, 248, 0.2)',
+            fill: true,
+            tension: 0.4
+          }]
+        },
+        options: { responsive: true, maintainAspectRatio: false }
+      });
+    }
+
+    function togglePulsePlayback() {
+      isPlaying = !isPlaying;
+      const btnPlay = document.getElementById('btn-playback-toggle');
+      const btnRun = document.getElementById('btn-run-sim');
+
+      if (isPlaying) {
+        btnPlay.innerText = "⏸";
+        btnRun.innerText = "⏸ Pause";
+        btnRun.className = "bg-amber-600 hover:bg-amber-500 text-white font-bold px-3 py-1.5 rounded-lg text-xs shadow-md transition";
+        
+        simInterval = setInterval(() => {
+          if (currentTime >= 120) {
+            pauseSimulation();
+            return;
+          }
+          currentTime++;
+          document.getElementById('playback-slider').value = currentTime;
+          updateSimulationUI(currentTime);
+        }, 150);
+      } else {
+        pauseSimulation();
+      }
+    }
+
+    function pauseSimulation() {
+      isPlaying = false;
+      clearInterval(simInterval);
+      document.getElementById('btn-playback-toggle').innerText = "▶";
+      const btnRun = document.getElementById('btn-run-sim');
+      btnRun.innerText = "▶ Run Simulation";
+      btnRun.className = "bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-3 py-1.5 rounded-lg text-xs shadow-md transition";
+    }
+
+    function onScrubberSlide(value) {
+      currentTime = parseInt(value);
+      updateSimulationUI(currentTime);
+    }
+
+    function resetSimulation() {
+      pauseSimulation();
+      currentTime = 0;
+      document.getElementById('playback-slider').value = 0;
+      document.getElementById('warning-banner').classList.add('hidden');
+      updateSimulationUI(0);
+    }
+
+    function updateSimulationUI(t) {
+      document.getElementById('playback-time-text').innerText = `T+ ${String(t).padStart(3, '0')} min`;
+      document.getElementById('metric-tfailure').innerText = `${t} min`;
+
+      const simIndicator = document.getElementById('sim-indicator');
+      const calcStatus = document.getElementById('calc-status');
+      const hudState = document.getElementById('hud-sim-state');
+      const warningBanner = document.getElementById('warning-banner');
+      const warningBannerText = document.getElementById('warning-banner-text');
+
+      if (t > 5) {
+        warningBanner.classList.remove('hidden');
+        if (t <= 35) {
+          warningBannerText.innerText = "EVACUATE IMMEDIATELY: Kundrathur & Thirumazhisai! Take Green West Highway Route to Sriperumbudur Hub.";
+        } else if (t <= 75) {
+          warningBannerText.innerText = "EVACUATE IMMEDIATELY: Poonamallee, Mangadu & Kovur! Water reaching Porur. Move West via NH48.";
+        } else {
+          warningBannerText.innerText = "CRITICAL EXTENSION: Ramapuram, Jafferkhanpet & Kotturpuram! Avoid Adyar river banks immediately.";
+        }
+      } else {
+        warningBanner.classList.add('hidden');
+      }
+
+      if (t > 0 && t < 120) {
+        simIndicator.className = "w-4 h-4 rounded-full bg-red-500 animate-pulse";
+        calcStatus.className = "text-[10px] bg-red-950 text-red-400 border border-red-800 px-2 py-0.5 rounded font-mono";
+        calcStatus.innerText = "SIMULATING";
+        hudState.innerText = "ACTIVE BREACH";
+        hudState.className = "text-[9px] bg-red-500/20 text-red-400 border border-red-500/30 px-2 py-0.5 rounded font-bold uppercase";
+      } else if (t >= 120) {
+        simIndicator.className = "w-4 h-4 rounded-full bg-amber-500";
+        calcStatus.innerText = "COMPLETE";
+        hudState.innerText = "MAX RECOVERY";
+      } else {
+        simIndicator.className = "w-4 h-4 rounded-full bg-slate-500";
+        calcStatus.innerText = "IDLE";
+        hudState.innerText = "READY";
+      }
+
+      const factor = 1 - Math.abs(t - 60) / 60;
+      const currentOutflow = Math.round(7593 * Math.max(0, factor));
+      const currentWidth = (237.2 * (t / 120)).toFixed(1);
+      const currentVel = (14.2 * (t / 120)).toFixed(1);
+      const currentVol = (42.5 * (t / 120)).toFixed(1);
+
+      document.getElementById('metric-qpeak').innerText = `${currentOutflow.toLocaleString()} m³/s`;
+      document.getElementById('metric-bwidth').innerText = `${currentWidth} m`;
+      document.getElementById('hud-wave-speed').innerText = `${currentVel} km/h`;
+      document.getElementById('hud-flood-vol').innerText = `${currentVol} M m³`;
+
+      const gauge1 = (1.5 + (t / 120) * 4.2).toFixed(2);
+      const gauge2 = (0.5 + (t / 120) * 3.8).toFixed(2);
+      document.getElementById('sensor-val-1').innerText = `${gauge1} m`;
+      document.getElementById('sensor-val-2').innerText = `${gauge2} m`;
+
+      if (floodCircle) floodCircle.setRadius((t / 120) * 6000);
+
+      const pointCount = Math.floor((t / 120) * fullWaterPath.length);
+      const activePath = fullWaterPath.slice(0, Math.max(1, pointCount + 1));
+      if (waterFlowPolyline) {
+        waterFlowPolyline.setLatLngs(activePath);
+      }
+
+      const chartPoints = timeLabels.map((timeLabel, idx) => (t >= timeLabel ? outflowData[idx] : null));
+      hydroChart.data.datasets[0].data = chartPoints;
+      hydroChart.update('none');
+    }
+
+    function triggerEvacuationAlert() {
+      document.getElementById('evac-modal').classList.remove('hidden');
+    }
+
+    function closeEvacModal() {
+      document.getElementById('evac-modal').classList.add('hidden');
+    }
+
+    function generatePdfReport() {
+      const { jsPDF } = window.jspdf;
+      const doc = new jsPDF();
+
+      doc.setFillColor(15, 23, 42);
+      doc.rect(0, 0, 210, 297, 'F');
+
+      doc.setTextColor(56, 189, 248);
+      doc.setFontSize(18);
+      doc.text("SurgeShield Tactical GIS - Situation Report", 14, 20);
+
+      doc.setFontSize(10);
+      doc.setTextColor(203, 213, 225);
+      doc.text(`Generated: ${new Date().toLocaleString()}`, 14, 28);
+      doc.text(`Simulation Stage: T+ ${currentTime} Minutes`, 14, 34);
+
+      doc.setDrawColor(51, 65, 85);
+      doc.line(14, 38, 196, 38);
+
+      doc.setFontSize(12);
+      doc.setTextColor(248, 250, 252);
+      doc.text("Hydraulic Metrics", 14, 48);
+
+      doc.setFontSize(10);
+      doc.setTextColor(148, 163, 184);
+      doc.text(`Peak / Current Outflow: ${document.getElementById('metric-qpeak').innerText}`, 14, 56);
+      doc.text(`Breach Width: ${document.getElementById('metric-bwidth').innerText}`, 14, 62);
+      doc.text(`Flood Volume Inundated: ${document.getElementById('hud-flood-vol').innerText}`, 14, 68);
+      doc.text(`Flood Wave Speed: ${document.getElementById('hud-wave-speed').innerText}`, 14, 74);
+
+      doc.setFontSize(12);
+      doc.setTextColor(16, 185, 129);
+      doc.text("Safe Evacuation Guidance", 14, 88);
+
+      doc.setFontSize(10);
+      doc.setTextColor(203, 213, 225);
+      doc.text("1. Primary Evacuation Route: Westbound along NH48 toward Sriperumbudur.", 14, 96);
+      doc.text("2. Assembly Hub Location: Sriperumbudur Community Grounds (+42m MSL).", 14, 102);
+      doc.text("3. Danger Zone Avoidance: Do not travel East toward Porur or Adyar River bed.", 14, 108);
+
+      doc.save(`SurgeShield_Evacuation_SitRep_T${currentTime}m.pdf`);
+    }
+  </script>
+</body>
+</html>
